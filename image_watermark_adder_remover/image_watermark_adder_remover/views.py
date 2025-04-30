@@ -4,6 +4,8 @@ import numpy as np
 import cv2
 import requests
 from skimage.restoration import inpaint
+from simple_lama_inpainting import SimpleLama
+from PIL import Image
 
 # Constants for watermark properties
 WATERMARK_TEXT_DEFAULT = "Sample Watermark"
@@ -28,33 +30,46 @@ def _load_image_from_url(url):
         if img is None:
             raise ValueError("Failed to decode image from URL")
         return img
+    except requests.exceptions.RequestException as e:
+        raise ValueError(f"Error fetching URL: {str(e)}")
+    except ValueError as e:
+        raise e
     except Exception as e:
-        raise ValueError(f"Error loading image from URL: {str(e)}")
+        raise ValueError(f"An unexpected error occurred: {str(e)}")
 
 def _load_image_from_file(uploaded_file):
     """Read and decode an image from an uploaded file."""
     if not uploaded_file.content_type.startswith('image/'):
         raise ValueError("Uploaded file is not an image")
-    file_bytes = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Failed to decode uploaded image")
-    return img
+    try:
+        file_bytes = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("Failed to decode uploaded image")
+        return img
+    except Exception as e:
+        raise ValueError(f"Error loading image from file: {str(e)}")
 
 def _load_watermark_image(uploaded_file):
     """Read and decode a watermark image, preserving alpha channel."""
     if not uploaded_file.content_type.startswith('image/'):
         raise ValueError("Watermark image is not a valid image file")
-    file_bytes = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise ValueError("Failed to decode watermark image")
-    return img
+    try:
+        file_bytes = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise ValueError("Failed to decode watermark image")
+        return img
+    except Exception as e:
+        raise ValueError(f"Error loading watermark image: {str(e)}")
 
 def _encode_image_to_response(img):
     """Encode an image to JPEG and return as an HTTP response."""
-    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
-    return HttpResponse(buffer.tobytes(), content_type='image/jpeg')
+    try:
+        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        return HttpResponse(buffer.tobytes(), content_type='image/jpeg')
+    except Exception as e:
+        return HttpResponse(f"Error encoding image: {str(e)}", status=500)
 
 def _resize_image(img, max_dim=MAX_IMAGE_DIM):
     """Resize image if it exceeds max dimension for faster processing."""
@@ -65,103 +80,115 @@ def _resize_image(img, max_dim=MAX_IMAGE_DIM):
         return cv2.resize(img, new_size, interpolation=cv2.INTER_AREA)
     return img
 
-def _enhanced_remove_watermark(img):
+def _remove_watermark_with_lama(img):
     """
-    Remove watermarks using a simplified, efficient pipeline:
-    1. Convert to grayscale and HSV for detection.
-    2. Detect watermarks using HSV color ranges and edge detection.
-    3. Inpaint detected regions using OpenCV and skimage.
+    Remove watermarks from the image using the LaMa inpainting model.
     """
-    # Ensure image is RGB
-    if len(img.shape) == 2 or img.shape[2] == 1:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    try:
+        # Convert OpenCV image (BGR) to PIL Image (RGB)
+        image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(image_rgb)
 
-    # Resize for performance
-    img = _resize_image(img)
-    
-    # Convert to grayscale and HSV
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        # Generate a mask for the watermark
+        mask = _generate_watermark_mask(img)
+        pil_mask = Image.fromarray(mask).convert('L')  # Ensure mask is single-channel
 
-    # Detect common watermark colors in HSV (orange, white, light blue)
-    color_ranges = [
-        (np.array([10, 100, 100]), np.array([35, 255, 255])),  # Orange
-        (np.array([0, 0, 180]), np.array([180, 30, 255])),     # White/light gray
-        (np.array([90, 50, 180]), np.array([130, 255, 255]))   # Light blue
-    ]
-    
-    mask = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
-    for lower, upper in color_ranges:
-        mask |= cv2.inRange(hsv, lower, upper)
+        # Initialize LaMa model
+        lama = SimpleLama()
 
-    # Detect edges for semi-transparent watermarks
-    edges = cv2.Canny(gray, 50, 150)
-    kernel = np.ones((5, 5), np.uint8)
-    edge_mask = cv2.dilate(edges, kernel, iterations=1)
-    mask |= edge_mask
+        # Perform inpainting
+        inpainted_pil = lama(pil_image, pil_mask)
 
-    # Clean up mask
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.dilate(mask, kernel, iterations=1)
+        # Convert back to OpenCV format (BGR)
+        inpainted_rgb = np.array(inpainted_pil)
+        inpainted_bgr = cv2.cvtColor(inpainted_rgb, cv2.COLOR_RGB2BGR)
 
-    # Inpaint using OpenCV (fast)
-    cv2_result = cv2.inpaint(img, mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+        return inpainted_bgr
+    except Exception as e:
+        raise Exception(f"Error during LaMa inpainting: {str(e)}")
 
-    # Inpaint using skimage (better quality for complex areas)
-    img_float = img.astype(np.float32) / 255.0
-    skimage_result = inpaint.inpaint_biharmonic(
-        img_float,
-        mask.astype(bool),
-        channel_axis=-1
-    )
-    skimage_result = (skimage_result * 255).astype(np.uint8)
 
-    # Blend results for best quality
-    return cv2.addWeighted(skimage_result, 0.6, cv2_result, 0.4, 0)
+def _generate_watermark_mask(img):
+    """
+    Generate a binary mask where the watermark is located.
+    """
+    try:
+        # Convert to HSV color space for better color segmentation
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        # Define color ranges for typical watermark colors (e.g., white, gray, orange)
+        white_mask = cv2.inRange(hsv, (0, 0, 200), (180, 40, 255))
+        gray_mask = cv2.inRange(hsv, (0, 0, 100), (180, 40, 199))
+        orange_mask = cv2.inRange(hsv, (10, 100, 100), (25, 255, 255))
+
+        # Combine masks
+        combined_mask = cv2.bitwise_or(white_mask, gray_mask)
+        combined_mask = cv2.bitwise_or(combined_mask, orange_mask)
+
+        # Refine the mask
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.dilate(mask, kernel, iterations=1)
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+
+        return mask
+    except Exception as e:
+        raise Exception(f"Error generating watermark mask: {str(e)}")
+
 
 def _add_text_watermark(img, text):
     """Add a semi-transparent text watermark to the center of the image."""
-    height, width = img.shape[:2]
-    text_size = cv2.getTextSize(text, WATERMARK_FONT, WATERMARK_FONT_SCALE, WATERMARK_THICKNESS)[0]
-    text_x = (width - text_size[0]) // 2
-    text_y = (height + text_size[1]) // 2
+    try:
+        height, width = img.shape[:2]
+        text_size = cv2.getTextSize(text, WATERMARK_FONT, WATERMARK_FONT_SCALE, WATERMARK_THICKNESS)[0]
+        text_x = (width - text_size[0]) // 2
+        text_y = (height + text_size[1]) // 2
 
-    overlay = img.copy()
-    cv2.putText(
-        overlay, text, (text_x, text_y),
-        WATERMARK_FONT, WATERMARK_FONT_SCALE,
-        WATERMARK_COLOR, WATERMARK_THICKNESS
-    )
-    cv2.addWeighted(overlay, WATERMARK_OPACITY, img, 1 - WATERMARK_OPACITY, 0, img)
+        overlay = img.copy()
+        cv2.putText(
+            overlay, text, (text_x, text_y),
+            WATERMARK_FONT, WATERMARK_FONT_SCALE,
+            WATERMARK_COLOR, WATERMARK_THICKNESS
+        )
+        cv2.addWeighted(overlay, WATERMARK_OPACITY, img, 1 - WATERMARK_OPACITY, 0, img)
+        return img
+    except Exception as e:
+        raise Exception(f"Error adding text watermark: {str(e)}")
 
 def _add_image_watermark(img, watermark_img):
     """Add a watermark image to the bottom right corner."""
-    height, width = img.shape[:2]
-    wm_height, wm_width = watermark_img.shape[:2]
+    try:
+        height, width = img.shape[:2]
+        wm_height, wm_width = watermark_img.shape[:2]
 
-    # Resize watermark
-    scale = (width * WATERMARK_SCALE_FACTOR) / wm_width
-    new_wm_size = (int(wm_width * scale), int(wm_height * scale))
-    watermark_img = cv2.resize(watermark_img, new_wm_size, interpolation=cv2.INTER_AREA)
+        # Resize watermark
+        scale = (width * WATERMARK_SCALE_FACTOR) / wm_width
+        new_wm_size = (int(wm_width * scale), int(wm_height * scale))
+        watermark_img = cv2.resize(watermark_img, new_wm_size, interpolation=cv2.INTER_AREA)
 
-    wm_height, wm_width = watermark_img.shape[:2]
-    wm_x = width - wm_width - WATERMARK_PADDING
-    wm_y = height - wm_height - WATERMARK_PADDING
+        wm_height, wm_width = watermark_img.shape[:2]
+        wm_x = width - wm_width - WATERMARK_PADDING
+        wm_y = height - wm_height - WATERMARK_PADDING
 
-    if wm_x < 0 or wm_y < 0:
-        raise ValueError("Watermark image too large for the main image")
+        if wm_x < 0 or wm_y < 0:
+            raise ValueError("Watermark image too large for the main image")
 
-    # Handle alpha channel if present
-    if watermark_img.shape[2] == 4:
-        wm_rgb = watermark_img[:, :, :3]
-        wm_alpha = watermark_img[:, :, 3] / 255.0
-        roi = img[wm_y:wm_y + wm_height, wm_x:wm_x + wm_width]
-        for c in range(3):
-            roi[:, :, c] = (1 - wm_alpha) * roi[:, :, c] + wm_alpha * wm_rgb[:, :, c]
-    else:
-        overlay = img.copy()
-        overlay[wm_y:wm_y + wm_height, wm_x:wm_x + wm_width] = watermark_img
-        cv2.addWeighted(overlay, WATERMARK_OPACITY, img, 1 - WATERMARK_OPACITY, 0, img)
+        # Handle alpha channel if present
+        if watermark_img.shape[2] == 4:
+            wm_rgb = watermark_img[:, :, :3]
+            wm_alpha = watermark_img[:, :, 3] / 255.0
+            roi = img[wm_y:wm_y + wm_height, wm_x:wm_x + wm_width]
+            for c in range(3):
+                roi[:, :, c] = (1 - wm_alpha) * roi[:, :, c] + wm_alpha * wm_rgb[:, :, c]
+        else:
+            overlay = img.copy()
+            overlay[wm_y:wm_y + wm_height, wm_x:wm_x + wm_width] = watermark_img
+            cv2.addWeighted(overlay, WATERMARK_OPACITY, img, 1 - WATERMARK_OPACITY, 0, img)
+        return img
+    except ValueError as e:
+        raise e
+    except Exception as e:
+        raise Exception(f"Error adding image watermark: {str(e)}")
 
 def home(request):
     """Render the home page."""
@@ -172,10 +199,10 @@ def remove_watermark(request):
     if request.method == 'GET':
         image_url = request.GET.get('image_url')
         if not image_url:
-            return render(request, 'home.html')
+            return HttpResponse("Please provide an image URL", status=400)
         try:
             img = _load_image_from_url(image_url)
-            result = _enhanced_remove_watermark(img)
+            result = _remove_watermark_with_lama(img)
             return _encode_image_to_response(result)
         except ValueError as e:
             return HttpResponse(str(e), status=400)
@@ -185,7 +212,7 @@ def remove_watermark(request):
     elif request.method == 'POST' and request.FILES.get('image'):
         try:
             img = _load_image_from_file(request.FILES['image'])
-            result = _enhanced_remove_watermark(img)
+            result = _remove_watermark_with_lama(img)
             return _encode_image_to_response(result)
         except ValueError as e:
             return HttpResponse(str(e), status=400)
@@ -193,6 +220,7 @@ def remove_watermark(request):
             return HttpResponse(f"Error processing image: {str(e)}", status=500)
 
     return HttpResponse("Invalid request. Use GET with image_url or POST to upload an image.", status=400)
+
 
 def add_watermark(request):
     """Add watermarks (text and/or image) to an image via upload (POST) or URL (GET)."""
@@ -202,11 +230,12 @@ def add_watermark(request):
         try:
             img = _load_image_from_file(request.FILES['main_image'])
             watermark_text = request.POST.get('text', WATERMARK_TEXT_DEFAULT)
-            _add_text_watermark(img, watermark_text)
+            img_with_text = _add_text_watermark(img.copy(), watermark_text) # Apply to a copy
+            final_img = img_with_text
             if request.FILES.get('watermark_image'):
                 watermark_img = _load_watermark_image(request.FILES['watermark_image'])
-                _add_image_watermark(img, watermark_img)
-            return _encode_image_to_response(img)
+                final_img = _add_image_watermark(img_with_text.copy(), watermark_img) # Apply to the result of text watermark
+            return _encode_image_to_response(final_img)
         except ValueError as e:
             return HttpResponse(str(e), status=400)
         except Exception as e:
@@ -220,11 +249,12 @@ def add_watermark(request):
             return HttpResponse("Please provide an image_url parameter", status=400)
         try:
             img = _load_image_from_url(image_url)
-            _add_text_watermark(img, watermark_text)
+            img_with_text = _add_text_watermark(img.copy(), watermark_text)
+            final_img = img_with_text
             if watermark_url:
                 watermark_img = _load_image_from_url(watermark_url)
-                _add_image_watermark(img, watermark_img)
-            return _encode_image_to_response(img)
+                final_img = _add_image_watermark(img_with_text.copy(), watermark_img)
+            return _encode_image_to_response(final_img)
         except ValueError as e:
             return HttpResponse(str(e), status=400)
         except Exception as e:

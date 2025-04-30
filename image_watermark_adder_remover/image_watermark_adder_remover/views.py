@@ -110,28 +110,30 @@ def _remove_watermark_with_lama(img):
 
 def _generate_watermark_mask(img):
     """
-    Generate a binary mask where the watermark is located.
+    Generate a binary mask for watermark areas based on contrast and edges.
+    This should be able to handle any color watermark.
     """
     try:
-        # Convert to HSV color space for better color segmentation
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Define color ranges for typical watermark colors (e.g., white, gray, orange)
-        white_mask = cv2.inRange(hsv, (0, 0, 200), (180, 40, 255))
-        gray_mask = cv2.inRange(hsv, (0, 0, 100), (180, 40, 199))
-        orange_mask = cv2.inRange(hsv, (10, 100, 100), (25, 255, 255))
+        # Apply GaussianBlur to reduce noise and improve edge detection
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-        # Combine masks
-        combined_mask = cv2.bitwise_or(white_mask, gray_mask)
-        combined_mask = cv2.bitwise_or(combined_mask, orange_mask)
+        # Use edge detection to find high contrast areas (watermark regions)
+        edges = cv2.Canny(blurred, threshold1=30, threshold2=100)
 
-        # Refine the mask
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.dilate(mask, kernel, iterations=1)
+        # Dilate the edges to make the watermark areas more solid
+        dilated_edges = cv2.dilate(edges, None, iterations=1)
+
+        # Fill holes in the edges using morphological closing
+        mask = cv2.morphologyEx(dilated_edges, cv2.MORPH_CLOSE, None)
+
+        # Optional: smooth the mask using GaussianBlur to make it less harsh
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
 
         return mask
+
     except Exception as e:
         raise Exception(f"Error generating watermark mask: {str(e)}")
 

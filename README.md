@@ -190,7 +190,7 @@ Watermark addition is handled by OpenCV:
 
 ## 📜 License
 
-This project is open-source. Please feel free to use, modify, and distribute it. If you plan to release it publicly, consider adding an open-source license like MIT.
+This project is open-source. Please feel free to use, modify, and distribute it.
 
 ---
 

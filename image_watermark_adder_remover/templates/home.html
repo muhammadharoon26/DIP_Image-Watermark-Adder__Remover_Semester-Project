@@ -1,32 +1,4 @@
-<!-- <!DOCTYPE html>
-<html>
-<head>
-    <title>Watermark Remover and Adder</title>
-</head>
-<body>
-    <h1>Upload an Image to Remove Watermark</h1>
-    <form method="post" enctype="multipart/form-data" action="{% url 'remove_watermark' %}">
-        {% csrf_token %}
-        <label for="image">Image:</label>
-        <input type="file" name="image" accept="image/*" required><br>
-        <button type="submit">Remove Watermark</button>
-    </form>
 
-    <h1>Upload an Image to Add Watermark</h1>
-    <form method="post" enctype="multipart/form-data" action="{% url 'add_watermark' %}">
-        {% csrf_token %}
-        <label for="main_image">Main Image:</label>
-        <input type="file" name="main_image" accept="image/*" required><br>
-        <label for="watermark_image">Watermark Image (optional):</label>
-        <input type="file" name="watermark_image" accept="image/*"><br>
-        <label for="text">Watermark Text (optional):</label>
-        <input type="text" name="text" placeholder="Sample Watermark"><br>
-        <button type="submit">Add Watermark</button>
-    </form>
-</body>
-</html> -->
-
-<!-- home.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>

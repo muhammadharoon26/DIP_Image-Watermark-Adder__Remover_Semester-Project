@@ -1,0 +1,10 @@
+Django
+numpy
+opencv-python
+requests
+scikit-image
+Pillow
+# The following are required for AI-based inpainting
+simple-lama-inpainting
+torch
+torchvision

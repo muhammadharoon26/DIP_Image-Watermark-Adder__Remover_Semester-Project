@@ -5,10 +5,10 @@ from django.conf.urls.static import static
 from . import views  # Assuming views.py is in the same app
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('', views.home, name='home'),
-    path('remove_watermark/', views.remove_watermark, name='remove_watermark'),
-    path('add_watermark/', views.add_watermark, name='add_watermark'),
+    path("admin/", admin.site.urls),
+    path("", views.home, name="home"),
+    path("remove_watermark/", views.remove_watermark, name="remove_watermark"),
+    path("add_watermark/", views.add_watermark, name="add_watermark"),
 ]
 
 # Serve static and media files only during development (DEBUG = True)

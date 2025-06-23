@@ -11,6 +11,8 @@ import os
 
 from django.core.asgi import get_asgi_application
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'image_watermark_adder_remover.settings')
+os.environ.setdefault(
+    "DJANGO_SETTINGS_MODULE", "image_watermark_adder_remover.settings"
+)
 
 application = get_asgi_application()

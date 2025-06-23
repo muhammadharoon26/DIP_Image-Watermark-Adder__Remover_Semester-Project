@@ -22,9 +22,6 @@ A powerful web application for adding and removing watermarks from images, devel
   - An easy-to-use, responsive UI built with Bootstrap.
   - Simple RESTful endpoints for programmatic access.
 
-## 📸 Screenshot
-
-*(A placeholder image representing the application's UI)*
 
 ## 🛠️ Technology Stack
 
